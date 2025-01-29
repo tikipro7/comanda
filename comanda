@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Comandas Móvil</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        :root {
+            --color-primario: #2c3e50;
+            --color-secundario: #3498db;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 10px;
+            background: #f8f9fa;
+        }
+
+        .contenedor {
+            display: grid;
+            gap: 15px;
+        }
+
+        .seccion {
+            background: white;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        h2 {
+            color: var(--color-primario);
+            margin-bottom: 15px;
+            font-size: 1.4rem;
+        }
+
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+
+        button {
+            background: var(--color-secundario);
+            color: white;
+            border: none;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.3s;
+        }
+
+        button:active {
+            opacity: 0.8;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 5px;
+            overflow-x: auto;
+            padding-bottom: 5px;
+        }
+
+        .tab {
+            min-width: 120px;
+            padding: 10px;
+            background: #e9ecef;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        .tab.activa {
+            background: var(--color-secundario);
+            color: white;
+        }
+
+        .items-comanda {
+            margin: 10px 0;
+        }
+
+        .item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            background: #f8f9fa;
+            margin: 5px 0;
+            border-radius: 6px;
+        }
+
+        .total {
+            font-weight: 700;
+            color: var(--color-primario);
+            margin-top: 15px;
+        }
+
+        @media (min-width: 768px) {
+            body {
+                padding: 20px;
+                max-width: 1000px;
+                margin: 0 auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="contenedor">
+        <!-- Inventario -->
+        <div class="seccion">
+            <h2>📦 Inventario</h2>
+            <input type="text" id="nombreProducto" placeholder="Nombre producto">
+            <input type="number" id="precioProducto" placeholder="Precio" step="0.01">
+            <button onclick="agregarAlInventario()">➕ Agregar Producto</button>
+            <select id="listaProductos" size="5" style="margin-top:10px;"></select>
+        </div>
+
+        <!-- Comandas -->
+        <div class="seccion">
+            <div class="tabs" id="tabs"></div>
+            <button onclick="nuevaComanda()" style="margin-top:10px;">🆕 Nueva Comanda</button>
+            <div id="comandas"></div>
+        </div>
+
+        <!-- Resumen Diario -->
+        <div class="seccion">
+            <h2>📊 Resumen del Día</h2>
+            <div id="resumen"></div>
+            <div class="total" id="totalDia">Total: $0.00</div>
+            <button onclick="reiniciarDia()" style="background:#e74c3c;">🔄 Reiniciar Día</button>
+        </div>
+    </div>
+
+    <script>
+        // Configuración PWA
+        if('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+                .then(() => console.log('Service Worker registrado'))
+                .catch(err => console.log('Error SW:', err));
+        }
+
+        // Datos
+        let inventario = JSON.parse(localStorage.getItem('inventario')) || [];
+        let comandas = JSON.parse(localStorage.getItem('comandas')) || {};
+        let comandasCerradas = JSON.parse(localStorage.getItem('comandasCerradas')) || [];
+
+        // Funciones Inventario
+        function actualizarInventario() {
+            localStorage.setItem('inventario', JSON.stringify(inventario));
+            const select = document.getElementById('listaProductos');
+            select.innerHTML = inventario.map(p => 
+                `<option value="${p.nombre}">${p.nombre} - $${p.precio.toFixed(2)}</option>`
+            ).join('');
+        }
+
+        function agregarAlInventario() {
+            const nombre = document.getElementById('nombreProducto').value;
+            const precio = parseFloat(document.getElementById('precioProducto').value);
+            
+            if(nombre && precio) {
+                inventario.push({ nombre, precio });
+                actualizarInventario();
+                document.getElementById('nombreProducto').value = '';
+                document.getElementById('precioProducto').value = '';
+            }
+        }
+
+        // Funciones Comandas
+        function nuevaComanda() {
+            const id = Date.now();
+            comandas[id] = { items: [], total: 0 };
+            localStorage.setItem('comandas', JSON.stringify(comandas));
+            
+            // Crear pestaña
+            const tab = document.createElement('div');
+            tab.className = 'tab';
+            tab.textContent = `Comanda ${Object.keys(comandas).length}`;
+            tab.onclick = () => mostrarComanda(id);
+            document.getElementById('tabs').appendChild(tab);
+            
+            // Crear comanda
+            const comandaDiv = document.createElement('div');
+            comandaDiv.className = 'seccion';
+            comandaDiv.id = `comanda-${id}`;
+            comandaDiv.innerHTML = `
+                <select id="producto-${id}"></select>
+                <button onclick="agregarItem(${id})">➕ Agregar</button>
+                <div class="items-comanda" id="items-${id}"></div>
+                <div class="total">Total: $0.00</div>
+                <button onclick="cerrarComanda(${id})" style="background:#27ae60;">✅ Cerrar Cuenta</button>
+            `;
+            document.getElementById('comandas').appendChild(comandaDiv);
+            
+            actualizarSelectores();
+            mostrarComanda(id);
+        }
+
+        function agregarItem(id) {
+            const select = document.querySelector(`#producto-${id}`);
+            const producto = inventario.find(p => p.nombre === select.value);
+            
+            if(producto) {
+                comandas[id].items.push(producto);
+                comandas[id].total += producto.precio;
+                localStorage.setItem('comandas', JSON.stringify(comandas));
+                actualizarItemsComanda(id);
+            }
+        }
+
+        function cerrarComanda(id) {
+            comandasCerradas.push({
+                ...comandas[id],
+                fecha: new Date().toLocaleString()
+            });
+            delete comandas[id];
+            localStorage.setItem('comandasCerradas', JSON.stringify(comandasCerradas));
+            actualizarResumen();
+            document.querySelector(`#comanda-${id}`).remove();
+            document.querySelector(`[onclick="mostrarComanda(${id})"]`).remove();
+        }
+
+        // Funciones auxiliares
+        function actualizarSelectores() {
+            document.querySelectorAll('[id^="producto-"]').forEach(select => {
+                select.innerHTML = inventario.map(p => 
+                    `<option value="${p.nombre}">${p.nombre} - $${p.precio.toFixed(2)}</option>`
+                ).join('');
+            });
+        }
+
+        function actualizarItemsComanda(id) {
+            const container = document.querySelector(`#items-${id}`);
+            const totalElement = document.querySelector(`#comanda-${id} .total`);
+            
+            container.innerHTML = comandas[id].items.map(item => `
+                <div class="item">
+                    <span>${item.nombre}</span>
+                    <span>$${item.precio.toFixed(2)}</span>
+                </div>
+            `).join('');
+            
+            totalElement.textContent = `Total: $${comandas[id].total.toFixed(2)}`;
+        }
+
+        function actualizarResumen() {
+            const totalDia = comandasCerradas.reduce((sum, c) => sum + c.total, 0);
+            document.getElementById('resumen').innerHTML = comandasCerradas.map(c => `
+                <div class="item">
+                    <span>${c.fecha}</span>
+                    <span>$${c.total.toFixed(2)}</span>
+                </div>
+            `).join('');
+            document.getElementById('totalDia').textContent = `Total: $${totalDia.toFixed(2)}`;
+            localStorage.setItem('comandasCerradas', JSON.stringify(comandasCerradas));
+        }
+
+        function reiniciarDia() {
+            comandasCerradas = [];
+            localStorage.removeItem('comandasCerradas');
+            actualizarResumen();
+        }
+
+        // Inicialización
+        actualizarInventario();
+        actualizarResumen();
+        Object.keys(comandas).forEach(id => nuevaComanda(Number(id)));
+    </script>
+</body>
+</html>
